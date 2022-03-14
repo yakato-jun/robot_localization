@@ -184,6 +184,8 @@ namespace RobotLocalization
       filtered_gps_pub_ = nh.advertise<sensor_msgs::NavSatFix>("gps/filtered", 10);
     }
 
+    this->gps_transform_pub_ = nh.advertise<geometry_msgs::TransformStamped>("utm/transform", 1);
+
     // Sleep for the parameterized amount of time, to give
     // other nodes time to start up (not always necessary)
     ros::Duration start_delay(delay);
@@ -332,6 +334,16 @@ namespace RobotLocalization
                                                            0.0 : cartesian_transform_stamped.transform.translation.z);
         cartesian_broadcaster_.sendTransform(cartesian_transform_stamped);
       }
+
+      geometry_msgs::TransformStamped utm_transform_stamped;
+      utm_transform_stamped.header.stamp = ros::Time::now();
+      std::string cartesian_frame_id = ("utm");
+      utm_transform_stamped.header.frame_id = world_frame_id_;
+      utm_transform_stamped.child_frame_id = cartesian_frame_id;
+      utm_transform_stamped.transform = tf2::toMsg(cartesian_world_trans_inverse_);
+      utm_transform_stamped.transform.translation.z = utm_transform_stamped.transform.translation.z;
+
+      this->gps_transform_pub_.publish(utm_transform_stamped);
     }
   }
 
