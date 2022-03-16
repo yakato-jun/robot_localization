@@ -63,6 +63,7 @@ namespace RobotLocalization
     gps_frame_id_(""),
     utm_zone_(0),
     world_frame_id_("odom"),
+    map_frame_id_("map"),
     transform_timeout_(ros::Duration(0)),
     tf_listener_(tf_buffer_)
   {
@@ -150,6 +151,7 @@ namespace RobotLocalization
 
         // Append the tf prefix in a tf2-friendly manner
         FilterUtilities::appendPrefix(tf_prefix, world_frame_id_);
+        FilterUtilities::appendPrefix(tf_prefix, map_frame_id_);
         FilterUtilities::appendPrefix(tf_prefix, base_link_frame_id_);
 
         robot_localization::SetDatum::Request request;
@@ -185,6 +187,9 @@ namespace RobotLocalization
     }
 
     this->gps_transform_pub_ = nh.advertise<geometry_msgs::TransformStamped>("utm/transform", 1);
+    this->utm_zone_pub_ = nh.advertise<std_msgs::Int64>("utm/zone", 1);
+
+    this->odom_update_time_ = ros::Time(0);
 
     // Sleep for the parameterized amount of time, to give
     // other nodes time to start up (not always necessary)
@@ -225,6 +230,48 @@ namespace RobotLocalization
         if (prepareFilteredGps(odom_gps))
         {
           filtered_gps_pub_.publish(odom_gps);
+        }
+      }
+
+      if (0 < this->odom_update_time_.toSec()) {
+        tf2::Transform map_to_odom_transform;
+        bool can_transform = RosFilterUtilities::lookupTransformSafe(tf_buffer_,
+                                                                    this->map_frame_id_,
+                                                                    this->world_frame_id_,
+                                                                    odom_update_time_,
+                                                                    transform_timeout_,
+                                                                    map_to_odom_transform);
+
+        if (can_transform) {
+          tf2::Transform map_transform;
+          tf2::Transform map_to_odom_transform_inverse = map_to_odom_transform.inverse();
+          map_transform.mult(cartesian_world_trans_inverse_, map_to_odom_transform_inverse);
+
+          geometry_msgs::TransformStamped utm_transform_stamped;
+          utm_transform_stamped.header.stamp = odom_update_time_;
+          utm_transform_stamped.header.frame_id = "world";
+          utm_transform_stamped.child_frame_id = this->map_frame_id_;
+          utm_transform_stamped.transform = tf2::toMsg(map_transform);
+
+          this->gps_transform_pub_.publish(utm_transform_stamped);
+
+          std_msgs::Int64 utm_zone_msg;
+          utm_zone_msg.data = this->utm_zone_;
+          this->utm_zone_pub_.publish(utm_zone_msg);
+
+          cartesian_broadcaster_.sendTransform(utm_transform_stamped);
+
+
+          geometry_msgs::TransformStamped map_utm_rotate_transform_stamped;
+          map_utm_rotate_transform_stamped.header.stamp = ros::Time::now();
+          map_utm_rotate_transform_stamped.header.frame_id = this->map_frame_id_;
+          map_utm_rotate_transform_stamped.child_frame_id = "utm_rotate";
+          map_utm_rotate_transform_stamped.transform = tf2::toMsg(map_transform);
+          map_utm_rotate_transform_stamped.transform.translation.x = 0;
+          map_utm_rotate_transform_stamped.transform.translation.y = 0;
+          map_utm_rotate_transform_stamped.transform.translation.z = 0;
+
+          cartesian_broadcaster_.sendTransform(map_utm_rotate_transform_stamped);
         }
       }
     }
@@ -334,16 +381,6 @@ namespace RobotLocalization
                                                            0.0 : cartesian_transform_stamped.transform.translation.z);
         cartesian_broadcaster_.sendTransform(cartesian_transform_stamped);
       }
-
-      geometry_msgs::TransformStamped utm_transform_stamped;
-      utm_transform_stamped.header.stamp = ros::Time::now();
-      std::string cartesian_frame_id = ("utm");
-      utm_transform_stamped.header.frame_id = world_frame_id_;
-      utm_transform_stamped.child_frame_id = cartesian_frame_id;
-      utm_transform_stamped.transform = tf2::toMsg(cartesian_world_trans_inverse_);
-      utm_transform_stamped.transform.translation.z = utm_transform_stamped.transform.translation.z;
-
-      this->gps_transform_pub_.publish(utm_transform_stamped);
     }
   }
 
@@ -429,7 +466,7 @@ namespace RobotLocalization
       bool nortp_tmp;
       try
       {
-        GeographicLib::UTMUPS::Forward(latitude, longitude, zone_tmp, nortp_tmp, cartesian_x, cartesian_y, utm_zone_);
+        GeographicLib::UTMUPS::Forward(latitude, longitude, zone_tmp, nortp_tmp, cartesian_x, cartesian_y, utm_zone_, forward_mode);
       }
       catch (const GeographicLib::GeographicErr& e)
       {
@@ -509,7 +546,7 @@ namespace RobotLocalization
     else
     {
       GeographicLib::UTMUPS::Reverse(utm_zone_,
-                                     northp_,
+                                     northp_, 
                                      odom_as_cartesian.getOrigin().getX(),
                                      odom_as_cartesian.getOrigin().getY(),
                                      latitude,
@@ -591,7 +628,7 @@ namespace RobotLocalization
                                                               base_link_frame_id_,
                                                               transform_time,
                                                               transform_timeout_,
-                                                              robot_orientation);
+                                                              robot_orientation, true);
 
       if (can_transform)
       {
@@ -655,7 +692,7 @@ namespace RobotLocalization
         try
         {
           GeographicLib::UTMUPS::Forward(msg->latitude, msg->longitude,
-                                        zone_tmp, northp_tmp, cartesian_x, cartesian_y, utm_zone_);
+                                        zone_tmp, northp_tmp, cartesian_x, cartesian_y, utm_zone_, forward_mode);
         }
         catch (const GeographicLib::GeographicErr& e)
         {
@@ -881,7 +918,7 @@ namespace RobotLocalization
       double k_tmp;
       double utm_meridian_convergence_degrees;
       GeographicLib::UTMUPS::Forward(msg->latitude, msg->longitude, utm_zone_, northp_,
-                                     cartesian_x, cartesian_y, utm_meridian_convergence_degrees, k_tmp);
+                                     cartesian_x, cartesian_y, utm_meridian_convergence_degrees, k_tmp, forward_mode, forward_mode);
       utm_meridian_convergence_ = utm_meridian_convergence_degrees * NavsatConversions::RADIANS_PER_DEGREE;
     }
 

@@ -43,6 +43,7 @@
 #include <nav_msgs/Odometry.h>
 #include <sensor_msgs/Imu.h>
 #include <sensor_msgs/NavSatFix.h>
+#include <std_msgs/Int64.h>
 
 #include <tf2/LinearMath/Transform.h>
 #include <tf2_ros/static_transform_broadcaster.h>
@@ -60,6 +61,7 @@
 
 namespace RobotLocalization
 {
+constexpr int forward_mode = GeographicLib::UTMUPS::zonespec::STANDARD;
 
 class NavSatTransform
 {
@@ -263,6 +265,10 @@ class NavSatTransform
     //!
     std::string world_frame_id_;
 
+    //! @brief Frame ID of Map
+    //!
+    std::string map_frame_id_;
+
     //! @brief Covariance for most recent odometry data
     //!
     Eigen::MatrixXd latest_odom_covariance_;
@@ -370,6 +376,10 @@ class NavSatTransform
     //! @brief Publiser for gps transform data
     //!
     ros::Publisher gps_transform_pub_;
+    
+    //! @brief Publiser for utm_zone data
+    //!
+    ros::Publisher utm_zone_pub_;
 };
 
 }  // namespace RobotLocalization
